@@ -1,0 +1,1096 @@
+import { useState, useRef, useEffect } from "react";
+
+const MODEL = "claude-sonnet-4-20250514";
+
+// ── Claude API ────────────────────────────────────────────────────────────────
+async function callClaude(system, userPrompt) {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: MODEL, max_tokens: 1000, system,
+        messages: [{ role: "user", content: userPrompt }],
+      }),
+    });
+    const data = await res.json();
+    return data.content?.map(b => b.text || "").join("") || "";
+  } catch { return ""; }
+}
+
+function parseJSON(raw) {
+  try { return JSON.parse(raw.replace(/```json|```/g, "").trim()); }
+  catch { return null; }
+}
+
+// ── Design System ─────────────────────────────────────────────────────────────
+const C = {
+  bg: "#0A0A0A", surface: "#111111", surfaceHigh: "#181818",
+  border: "#222222", borderLight: "#2A2A2A",
+  text: "#F0EDE8", textMuted: "#666", textDim: "#444",
+  gold: "#C9A84C", goldLight: "#E8C97A", goldDim: "#8A6A20",
+  green: "#2ECC8A", greenDim: "#1A4A35",
+  amber: "#E8943A", amberDim: "#4A2E10",
+  blue: "#4A9EE8", blueDim: "#0E2A4A",
+  purple: "#9B6EE8", purpleDim: "#2A1A4A",
+  red: "#E84A4A", redDim: "#4A1010",
+};
+
+// ── Plans ─────────────────────────────────────────────────────────────────────
+const PLANS = [
+  {
+    id: "starter", name: "Starter", price: 19, tagline: "Your first 10 sales",
+    color: C.blue, dim: C.blueDim,
+    features: ["Abandoned Cart Recovery (3-email AI sequences)", "Weekly Promo Calendar (7 days)", "Email copy + discount codes", "Up to 50 cart recoveries/month"],
+    gumroad: "https://gumroad.com/l/flowsell-starter",
+  },
+  {
+    id: "growth", name: "Growth", price: 49, tagline: "30+ sales every month", popular: true,
+    color: C.gold, dim: C.goldDim,
+    features: ["Everything in Starter", "Dormant Customer Reactivation", "Daily Social Content (IG, TikTok, FB)", "SMS + Email win-back campaigns", "Up to 200 cart recoveries/month"],
+    gumroad: "https://gumroad.com/l/flowsell-growth",
+  },
+  {
+    id: "scale", name: "Scale", price: 99, tagline: "100+ sales on autopilot",
+    color: C.purple, dim: C.purpleDim,
+    features: ["Everything in Growth", "AI Ad Copy Generator (Meta + Google)", "SEO Blog Content Generator", "Product Description Rewriter", "Unlimited cart recoveries", "Priority support"],
+    gumroad: "https://gumroad.com/l/flowsell-scale",
+  },
+];
+
+const NAV_BY_PLAN = {
+  starter: [
+    { id: "dash", icon: "◉", label: "Dashboard" },
+    { id: "cart", icon: "⊡", label: "Cart Recovery" },
+    { id: "promo", icon: "◆", label: "Promo Calendar" },
+  ],
+  growth: [
+    { id: "dash", icon: "◉", label: "Dashboard" },
+    { id: "cart", icon: "⊡", label: "Cart Recovery" },
+    { id: "reactivation", icon: "↺", label: "Reactivation" },
+    { id: "social", icon: "◈", label: "Social Content" },
+    { id: "promo", icon: "◆", label: "Promo Calendar" },
+  ],
+  scale: [
+    { id: "dash", icon: "◉", label: "Dashboard" },
+    { id: "cart", icon: "⊡", label: "Cart Recovery" },
+    { id: "reactivation", icon: "↺", label: "Reactivation" },
+    { id: "social", icon: "◈", label: "Social Content" },
+    { id: "promo", icon: "◆", label: "Promo Calendar" },
+    { id: "ads", icon: "▲", label: "Ad Copy" },
+    { id: "seo", icon: "❋", label: "SEO Blog" },
+    { id: "products", icon: "◇", label: "Product Descriptions" },
+  ],
+};
+
+const MOCK_CARTS = [
+  { id: 1, name: "Amara O.", items: ["Winter Jacket", "Scarf"], total: 134, hoursAgo: 1, discount: 15 },
+  { id: 2, name: "James K.", items: ["Sneakers X1"], total: 89, hoursAgo: 4, discount: 10 },
+  { id: 3, name: "Sofia M.", items: ["Handbag", "Wallet"], total: 212, hoursAgo: 9, discount: 20 },
+];
+const MOCK_DORMANT = [
+  { id: 1, name: "Chidi A.", lastOrder: "91 days ago", spent: "$340", orders: 4, topItem: "Leather Belt" },
+  { id: 2, name: "Priya S.", lastOrder: "67 days ago", spent: "$189", orders: 2, topItem: "Canvas Tote" },
+  { id: 3, name: "Lena W.", lastOrder: "54 days ago", spent: "$520", orders: 6, topItem: "Denim Jacket" },
+];
+
+// ── Reusable UI ───────────────────────────────────────────────────────────────
+function GoldBtn({ children, onClick, disabled, full, outline, small, style = {} }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      width: full ? "100%" : "auto",
+      padding: small ? "8px 16px" : "13px 24px",
+      background: outline ? "transparent" : disabled ? "#333" : `linear-gradient(135deg, ${C.goldLight}, ${C.gold})`,
+      color: outline ? C.gold : disabled ? C.textDim : "#000",
+      border: outline ? `1.5px solid ${C.gold}` : "none",
+      borderRadius: 10, fontFamily: "'DM Sans', sans-serif",
+      fontWeight: 700, fontSize: small ? 12 : 13,
+      cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.6 : 1,
+      transition: "all 0.2s", letterSpacing: "0.02em",
+      ...style
+    }}
+      onMouseEnter={e => { if (!disabled && !outline) e.currentTarget.style.filter = "brightness(1.1)"; }}
+      onMouseLeave={e => { e.currentTarget.style.filter = ""; }}
+    >{children}</button>
+  );
+}
+
+function Card({ children, style = {}, glow }) {
+  return (
+    <div style={{
+      background: C.surface, border: `1px solid ${C.border}`,
+      borderRadius: 16, overflow: "hidden",
+      boxShadow: glow ? `0 0 30px ${C.goldDim}` : "none",
+      ...style
+    }}>{children}</div>
+  );
+}
+
+function Spinner({ text = "Generating..." }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 0", color: C.textMuted, fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
+      <span style={{ animation: "spin 1s linear infinite", display: "inline-block", color: C.gold }}>✦</span> {text}
+    </div>
+  );
+}
+
+function SectionHead({ title, sub, color = C.gold }) {
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 28, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text, margin: 0, lineHeight: 1.1 }}>{title}</h2>
+      {sub && <p style={{ fontSize: 13, color: C.textMuted, marginTop: 6, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.6 }}>{sub}</p>}
+    </div>
+  );
+}
+
+function Tag({ children, color = C.gold, dim = C.goldDim }) {
+  return (
+    <span style={{ fontSize: 11, fontWeight: 700, color, background: dim + "55", border: `1px solid ${dim}`, padding: "3px 10px", borderRadius: 20, fontFamily: "'DM Sans', sans-serif", letterSpacing: "0.04em" }}>
+      {children}
+    </span>
+  );
+}
+
+// ── LANDING PAGE ──────────────────────────────────────────────────────────────
+function Landing({ onLogin, onPlan }) {
+  const [hovered, setHovered] = useState(null);
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'DM Sans', sans-serif" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeUp { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+        @keyframes float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-8px); } }
+        * { box-sizing:border-box; margin:0; padding:0; }
+        ::-webkit-scrollbar { width:4px; } ::-webkit-scrollbar-thumb { background:#333; border-radius:2px; }
+      `}</style>
+
+      {/* Nav */}
+      <nav style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, padding: "0 40px", height: 60, display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(10,10,10,0.9)", backdropFilter: "blur(12px)", borderBottom: `1px solid ${C.border}` }}>
+        <div style={{ fontSize: 20, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text }}>
+          ✦ FlowSell <span style={{ fontSize: 10, color: C.goldDim, letterSpacing: "0.15em", fontFamily: "'DM Sans', sans-serif" }}>AI</span>
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <button onClick={onLogin} style={{ background: "none", border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: 8, padding: "8px 18px", fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>Log In</button>
+          <GoldBtn onClick={() => document.getElementById("pricing").scrollIntoView({ behavior: "smooth" })} small>Get Started →</GoldBtn>
+        </div>
+      </nav>
+
+      {/* Hero */}
+      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "100px 40px 60px", position: "relative", overflow: "hidden" }}>
+        {/* Background glow */}
+        <div style={{ position: "absolute", top: "30%", left: "50%", transform: "translate(-50%,-50%)", width: 600, height: 600, background: `radial-gradient(circle, ${C.goldDim}22 0%, transparent 70%)`, pointerEvents: "none" }} />
+
+        <div style={{ animation: "fadeUp 0.6s ease both" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: C.goldDim + "44", border: `1px solid ${C.goldDim}`, borderRadius: 20, padding: "6px 16px", marginBottom: 28 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.green, animation: "pulse 2s infinite" }} />
+            <span style={{ fontSize: 12, color: C.gold, fontWeight: 600, letterSpacing: "0.06em" }}>AI-POWERED SHOPIFY GROWTH TOOL</span>
+          </div>
+        </div>
+
+        <h1 style={{ fontSize: 72, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, lineHeight: 1.0, marginBottom: 24, maxWidth: 800, animation: "fadeUp 0.6s ease 0.1s both", opacity: 0, animationFillMode: "forwards" }}>
+          Your Shopify Store<br />
+          <span style={{ background: `linear-gradient(135deg, ${C.goldLight}, ${C.gold})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Deserves Daily Sales</span>
+        </h1>
+
+        <p style={{ fontSize: 18, color: C.textMuted, maxWidth: 520, lineHeight: 1.7, marginBottom: 40, animation: "fadeUp 0.6s ease 0.2s both", opacity: 0, animationFillMode: "forwards" }}>
+          FlowSell's AI writes your abandoned cart emails, win-back campaigns, social posts, and weekly promos — automatically. Store owners see results in 24 hours.
+        </p>
+
+        <div style={{ display: "flex", gap: 14, animation: "fadeUp 0.6s ease 0.3s both", opacity: 0, animationFillMode: "forwards" }}>
+          <GoldBtn onClick={() => document.getElementById("pricing").scrollIntoView({ behavior: "smooth" })} style={{ padding: "16px 36px", fontSize: 15 }}>Start Getting Sales →</GoldBtn>
+          <button onClick={onLogin} style={{ padding: "16px 28px", background: C.surfaceHigh, border: `1px solid ${C.border}`, color: C.text, borderRadius: 10, fontSize: 14, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>View Demo</button>
+        </div>
+
+        {/* Stats */}
+        <div style={{ display: "flex", gap: 48, marginTop: 72, animation: "fadeUp 0.6s ease 0.4s both", opacity: 0, animationFillMode: "forwards" }}>
+          {[["15%", "Cart Recovery Rate"], ["3×", "More Revenue"], ["2 hrs", "Saved Per Day"]].map(([val, label]) => (
+            <div key={label} style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 32, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.gold }}>{val}</div>
+              <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4, letterSpacing: "0.04em" }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Features */}
+      <div style={{ padding: "80px 40px", maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 56 }}>
+          <h2 style={{ fontSize: 44, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text }}>Everything your store needs<br /><span style={{ color: C.gold }}>to get consistent sales</span></h2>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
+          {[
+            { icon: "⊡", title: "Cart Recovery", desc: "AI writes a 3-email sequence for every abandoned cart. Recover 15% of lost sales automatically.", color: C.blue },
+            { icon: "↺", title: "Customer Reactivation", desc: "Identify dormant buyers and win them back with personalised campaigns. Email + SMS.", color: C.purple },
+            { icon: "◈", title: "Social Content", desc: "Daily ready-to-post captions, hooks, and hashtags for Instagram, TikTok, and Facebook.", color: C.green },
+            { icon: "◆", title: "Promo Calendar", desc: "Full 7-day promotional plan with email copy, discount codes, and revenue estimates.", color: C.gold },
+            { icon: "▲", title: "Ad Copy", desc: "High-converting Meta and Google ad copy generated in seconds. A/B variations included.", color: C.amber },
+            { icon: "❋", title: "SEO Blog Posts", desc: "Keyword-targeted blog content that drives organic traffic to your store every week.", color: C.red },
+          ].map((f, i) => (
+            <div key={i} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: "28px 24px", transition: "border-color 0.2s, transform 0.2s", cursor: "default" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = f.color + "66"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = ""; }}>
+              <div style={{ fontSize: 28, color: f.color, marginBottom: 14 }}>{f.icon}</div>
+              <div style={{ fontSize: 16, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700, color: C.text, marginBottom: 8 }}>{f.title}</div>
+              <div style={{ fontSize: 13, color: C.textMuted, lineHeight: 1.65 }}>{f.desc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Pricing */}
+      <div id="pricing" style={{ padding: "80px 40px", maxWidth: 1000, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 52 }}>
+          <h2 style={{ fontSize: 44, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text, marginBottom: 12 }}>Simple, honest pricing</h2>
+          <p style={{ fontSize: 15, color: C.textMuted }}>Start free for 7 days. Cancel anytime. No credit card games.</p>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
+          {PLANS.map((plan, i) => (
+            <div key={plan.id} style={{
+              background: plan.popular ? C.surfaceHigh : C.surface,
+              border: `1.5px solid ${plan.popular ? C.gold : C.border}`,
+              borderRadius: 20, padding: "32px 28px", position: "relative",
+              transform: plan.popular ? "scale(1.03)" : "scale(1)",
+              boxShadow: plan.popular ? `0 0 40px ${C.goldDim}44` : "none",
+            }}>
+              {plan.popular && (
+                <div style={{ position: "absolute", top: -12, left: "50%", transform: "translateX(-50%)", background: `linear-gradient(135deg, ${C.goldLight}, ${C.gold})`, color: "#000", fontSize: 11, fontWeight: 800, padding: "4px 16px", borderRadius: 20, letterSpacing: "0.06em", fontFamily: "'DM Sans', sans-serif" }}>MOST POPULAR</div>
+              )}
+              <div style={{ fontSize: 12, color: plan.color, fontWeight: 700, letterSpacing: "0.1em", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>{plan.name.toUpperCase()}</div>
+              <div style={{ fontSize: 48, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text, lineHeight: 1 }}>${plan.price}<span style={{ fontSize: 14, color: C.textMuted, fontFamily: "'DM Sans', sans-serif", fontWeight: 400 }}>/mo</span></div>
+              <div style={{ fontSize: 13, color: C.textMuted, marginTop: 6, marginBottom: 24, fontFamily: "'DM Sans', sans-serif" }}>{plan.tagline}</div>
+              <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 20, marginBottom: 24 }}>
+                {plan.features.map((f, j) => (
+                  <div key={j} style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "flex-start" }}>
+                    <span style={{ color: plan.color, fontSize: 14, marginTop: 1, flexShrink: 0 }}>✓</span>
+                    <span style={{ fontSize: 13, color: C.textMuted, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>{f}</span>
+                  </div>
+                ))}
+              </div>
+              <GoldBtn full onClick={() => onPlan(plan)} outline={!plan.popular} style={plan.popular ? {} : { borderColor: plan.color, color: plan.color }}>
+                Start Free Trial →
+              </GoldBtn>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div style={{ borderTop: `1px solid ${C.border}`, padding: "32px 40px", textAlign: "center" }}>
+        <div style={{ fontSize: 18, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.textMuted, marginBottom: 8 }}>✦ FlowSell</div>
+        <p style={{ fontSize: 12, color: C.textDim }}>AI-powered sales growth for Shopify stores · Built for entrepreneurs who need results</p>
+      </div>
+    </div>
+  );
+}
+
+// ── LOGIN PAGE ────────────────────────────────────────────────────────────────
+function Login({ onLogin, onBack }) {
+  const [form, setForm] = useState({ email: "", password: "", store: "", plan: "growth" });
+  const [mode, setMode] = useState("login");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    if (!form.email || !form.password) { setError("Please fill in all fields."); return; }
+    setLoading(true); setError("");
+    await new Promise(r => setTimeout(r, 900));
+    const plan = PLANS.find(p => p.id === form.plan) || PLANS[1];
+    onLogin({ email: form.email, storeName: form.store || "My Store", plan });
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap'); @keyframes fadeUp { from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)} } * { box-sizing:border-box; margin:0; padding:0; }`}</style>
+      <div style={{ width: "100%", maxWidth: 420, animation: "fadeUp 0.4s ease both" }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginBottom: 28, display: "flex", alignItems: "center", gap: 6 }}>← Back to home</button>
+
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontSize: 26, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text }}>✦ FlowSell</div>
+          <div style={{ fontSize: 14, color: C.textMuted, marginTop: 8 }}>{mode === "login" ? "Welcome back" : "Create your account"}</div>
+        </div>
+
+        <Card style={{ padding: "32px 28px" }}>
+          {[
+            mode === "signup" && { key: "store", label: "Store Name", ph: "e.g. Nova Threads" },
+            { key: "email", label: "Email Address", ph: "you@example.com", type: "email" },
+            { key: "password", label: "Password", ph: "••••••••", type: "password" },
+          ].filter(Boolean).map(f => (
+            <div key={f.key} style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 7 }}>{f.label}</div>
+              <input type={f.type || "text"} value={form[f.key] || ""} onChange={e => setForm(s => ({ ...s, [f.key]: e.target.value }))} placeholder={f.ph}
+                onKeyDown={e => e.key === "Enter" && submit()}
+                style={{ width: "100%", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "11px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", color: C.text, outline: "none" }} />
+            </div>
+          ))}
+
+          {mode === "signup" && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 7 }}>Select Plan</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {PLANS.map(p => (
+                  <button key={p.id} onClick={() => setForm(s => ({ ...s, plan: p.id }))} style={{
+                    flex: 1, padding: "9px 4px", borderRadius: 8, border: `1.5px solid ${form.plan === p.id ? p.color : C.border}`,
+                    background: form.plan === p.id ? p.color + "22" : "transparent",
+                    color: form.plan === p.id ? p.color : C.textMuted,
+                    fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    <div>{p.name}</div>
+                    <div style={{ fontWeight: 400, marginTop: 2 }}>${p.price}/mo</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {error && <div style={{ fontSize: 13, color: C.red, marginBottom: 14, fontFamily: "'DM Sans', sans-serif" }}>{error}</div>}
+
+          <GoldBtn full onClick={submit} disabled={loading}>
+            {loading ? "✦ Signing in..." : mode === "login" ? "Log In →" : "Create Account →"}
+          </GoldBtn>
+
+          <div style={{ textAlign: "center", marginTop: 18, fontSize: 13, color: C.textMuted, fontFamily: "'DM Sans', sans-serif" }}>
+            {mode === "login" ? "No account? " : "Already have one? "}
+            <button onClick={() => setMode(mode === "login" ? "signup" : "login")} style={{ background: "none", border: "none", color: C.gold, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
+              {mode === "login" ? "Sign up free" : "Log in"}
+            </button>
+          </div>
+        </Card>
+
+        <div style={{ textAlign: "center", marginTop: 20, fontSize: 12, color: C.textDim, fontFamily: "'DM Sans', sans-serif" }}>
+          Demo mode — try any plan to explore the dashboard
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── DASHBOARD SHELL ───────────────────────────────────────────────────────────
+function Dashboard({ user, onLogout }) {
+  const [tab, setTab] = useState("dash");
+  const [store, setStore] = useState({ name: user.storeName, niche: "products", avgOrder: "65", tone: "friendly and modern" });
+  const [setupOpen, setSetupOpen] = useState(false);
+  const plan = user.plan;
+  const nav = NAV_BY_PLAN[plan.id] || NAV_BY_PLAN.growth;
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700;800&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+        @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+        *{box-sizing:border-box;margin:0;padding:0}
+        ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2A2A2A;border-radius:2px}
+        input,select,textarea{color-scheme:dark}
+        input:focus,select:focus,textarea:focus{outline:none;border-color:#C9A84C !important}
+      `}</style>
+
+      {setupOpen && <StoreSetupModal store={store} setStore={setStore} onClose={() => setSetupOpen(false)} />}
+
+      {/* Sidebar */}
+      <div style={{ width: 220, background: "#0D0D0D", borderRight: `1px solid ${C.border}`, position: "fixed", top: 0, bottom: 0, display: "flex", flexDirection: "column", zIndex: 50 }}>
+        <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 18, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text }}>✦ FlowSell</div>
+          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: plan.color, background: plan.color + "22", border: `1px solid ${plan.color}44`, padding: "2px 8px", borderRadius: 10, fontFamily: "'DM Sans', sans-serif", letterSpacing: "0.06em" }}>{plan.name.toUpperCase()}</span>
+            <span style={{ fontSize: 11, color: C.textDim, fontFamily: "'DM Sans', sans-serif" }}>${plan.price}/mo</span>
+          </div>
+        </div>
+
+        <nav style={{ flex: 1, padding: "10px 0", overflowY: "auto" }}>
+          {nav.map(n => (
+            <button key={n.id} onClick={() => setTab(n.id)} style={{
+              display: "flex", alignItems: "center", gap: 11, width: "100%",
+              padding: "11px 20px", background: "none", border: "none",
+              borderLeft: tab === n.id ? `2.5px solid ${plan.color}` : "2.5px solid transparent",
+              color: tab === n.id ? C.text : C.textMuted,
+              fontSize: 13, fontWeight: tab === n.id ? 700 : 400,
+              cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s",
+            }}>
+              <span style={{ fontSize: 14, color: tab === n.id ? plan.color : C.textDim }}>{n.icon}</span> {n.label}
+            </button>
+          ))}
+
+          {/* Upgrade prompts for locked features */}
+          {plan.id === "starter" && (
+            <div style={{ margin: "12px 12px 0", background: C.goldDim + "22", border: `1px solid ${C.goldDim}`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 11, color: C.gold, fontWeight: 700, fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>🔒 Unlock in Growth</div>
+              <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>Reactivation, Social Content + more</div>
+            </div>
+          )}
+          {plan.id === "growth" && (
+            <div style={{ margin: "12px 12px 0", background: C.purple + "11", border: `1px solid ${C.purple}33`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 11, color: C.purple, fontWeight: 700, fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>🔒 Unlock in Scale</div>
+              <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>Ad Copy, SEO Blog + Product Descriptions</div>
+            </div>
+          )}
+        </nav>
+
+        <div style={{ padding: "14px 16px", borderTop: `1px solid ${C.border}` }}>
+          <button onClick={() => setSetupOpen(true)} style={{ width: "100%", background: C.surfaceHigh, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 8 }}>
+            <div style={{ width: 28, height: 28, background: C.gold + "22", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.gold, fontFamily: "'Cormorant Garamond', serif" }}>{store.name.slice(0, 2).toUpperCase()}</div>
+            <div style={{ flex: 1, textAlign: "left" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: C.text, fontFamily: "'DM Sans', sans-serif" }}>{store.name}</div>
+              <div style={{ fontSize: 10, color: C.textDim, fontFamily: "'DM Sans', sans-serif" }}>Edit profile ⚙</div>
+            </div>
+          </button>
+          <button onClick={onLogout} style={{ width: "100%", background: "none", border: "none", color: C.textDim, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", padding: "6px 0", textAlign: "center" }}>Sign Out</button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{ marginLeft: 220, flex: 1, padding: "36px 40px", maxWidth: 980 + 220, width: "100%" }}>
+        <div style={{ maxWidth: 860 }}>
+          {tab === "dash" && <DashOverview plan={plan} setTab={setTab} />}
+          {tab === "cart" && <CartRecovery store={store} plan={plan} />}
+          {tab === "reactivation" && <Reactivation store={store} />}
+          {tab === "social" && <SocialContent store={store} />}
+          {tab === "promo" && <PromoCalendar store={store} />}
+          {tab === "ads" && <AdCopy store={store} />}
+          {tab === "seo" && <SEOBlog store={store} />}
+          {tab === "products" && <ProductDescriptions store={store} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── STORE SETUP MODAL ─────────────────────────────────────────────────────────
+function StoreSetupModal({ store, setStore, onClose }) {
+  const [local, setLocal] = useState(store);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, padding: "32px", width: "100%", maxWidth: 460, animation: "fadeUp 0.3s ease both" }}>
+        <div style={{ fontSize: 22, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text, marginBottom: 24 }}>Store Profile</div>
+        {[
+          { key: "name", label: "Store Name", ph: "e.g. Nova Threads" },
+          { key: "niche", label: "What you sell", ph: "e.g. handmade jewellery, streetwear, skincare, electronics" },
+          { key: "avgOrder", label: "Average Order Value ($)", ph: "e.g. 65" },
+          { key: "tone", label: "Brand Tone", ph: "e.g. bold & edgy, warm & friendly, luxurious & premium" },
+        ].map(({ key, label, ph }) => (
+          <div key={key} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 7 }}>{label}</div>
+            <input value={local[key] || ""} onChange={e => setLocal(s => ({ ...s, [key]: e.target.value }))} placeholder={ph}
+              style={{ width: "100%", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "11px 14px", fontSize: 14, fontFamily: "'DM Sans', sans-serif", color: C.text }} />
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <GoldBtn full onClick={() => { setStore(local); onClose(); }}>Save Profile</GoldBtn>
+          <button onClick={onClose} style={{ padding: "13px 20px", background: C.surfaceHigh, border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: 10, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── DASH OVERVIEW ─────────────────────────────────────────────────────────────
+function DashOverview({ plan, setTab }) {
+  const stats = [
+    { label: "Revenue Today", val: "$1,840", delta: "↑ +34% vs yesterday", color: C.green },
+    { label: "Abandoned Carts", val: "3", delta: "$435 at risk", color: C.amber },
+    { label: "Dormant Customers", val: plan.id !== "starter" ? "3" : "—", delta: plan.id !== "starter" ? "$1,049 lifetime" : "Upgrade to Growth", color: C.purple },
+    { label: "Weekly Revenue", val: "$7,430", delta: "↑ 18% vs last week", color: C.blue },
+  ];
+
+  const actions = [
+    { label: "Recover 3 abandoned carts", impact: "+$65 est.", tab: "cart", color: C.amber, plans: ["starter", "growth", "scale"] },
+    { label: "Reactivate dormant customers", impact: "+$157 est.", tab: "reactivation", color: C.purple, plans: ["growth", "scale"] },
+    { label: "Generate today's social posts", impact: "+200 reach", tab: "social", color: C.blue, plans: ["growth", "scale"] },
+    { label: "Build this week's promo calendar", impact: "+$420 est.", tab: "promo", color: C.gold, plans: ["starter", "growth", "scale"] },
+    { label: "Generate ad copy for Meta", impact: "+$280 est.", tab: "ads", color: C.green, plans: ["scale"] },
+    { label: "Write an SEO blog post", impact: "+60 organic/wk", tab: "seo", color: C.red, plans: ["scale"] },
+  ].filter(a => a.plans.includes(plan.id));
+
+  return (
+    <div style={{ animation: "fadeUp 0.4s ease both" }}>
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontSize: 28, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text }}>Good morning ✦</h2>
+        <p style={{ fontSize: 13, color: C.textMuted, marginTop: 4, fontFamily: "'DM Sans', sans-serif" }}>Here's what your AI recommends doing today to drive more sales.</p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14, marginBottom: 24 }}>
+        {stats.map((s, i) => (
+          <div key={i} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: "18px 20px", animation: `fadeUp 0.4s ease ${i * 0.07}s both` }}>
+            <div style={{ fontSize: 11, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", fontWeight: 600, marginBottom: 10 }}>{s.label}</div>
+            <div style={{ fontSize: 26, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text }}>{s.val}</div>
+            <div style={{ fontSize: 12, color: s.color, fontWeight: 600, marginTop: 5, fontFamily: "'DM Sans', sans-serif" }}>{s.delta}</div>
+          </div>
+        ))}
+      </div>
+
+      <Card>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 18, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text }}>Today's AI Action Plan</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 3, fontFamily: "'DM Sans', sans-serif" }}>{actions.length} actions ready · Click any to get started</div>
+        </div>
+        {actions.map((a, i) => (
+          <div key={i} onClick={() => setTab(a.tab)} style={{
+            display: "flex", alignItems: "center", padding: "15px 22px",
+            borderLeft: `3px solid ${a.color}`,
+            borderBottom: i < actions.length - 1 ? `1px solid ${C.border}` : "none",
+            cursor: "pointer", transition: "background 0.15s",
+          }}
+            onMouseEnter={e => e.currentTarget.style.background = C.surfaceHigh}
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+          >
+            <div style={{ flex: 1, fontSize: 14, color: C.text, fontFamily: "'DM Sans', sans-serif" }}>{a.label}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.green, fontFamily: "'DM Sans', sans-serif", marginRight: 16 }}>{a.impact}</div>
+            <div style={{ fontSize: 12, color: C.textDim }}>→</div>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+// ── CART RECOVERY ─────────────────────────────────────────────────────────────
+function CartRecovery({ store, plan }) {
+  return (
+    <div>
+      <SectionHead title="Cart Recovery" sub={`${MOCK_CARTS.length} abandoned carts · $${MOCK_CARTS.reduce((s, c) => s + c.total, 0)} at risk · Est. recovery $${Math.round(MOCK_CARTS.reduce((s, c) => s + c.total, 0) * 0.15)}`} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {MOCK_CARTS.map((cart, i) => <CartCard key={cart.id} cart={cart} store={store} idx={i} />)}
+      </div>
+    </div>
+  );
+}
+
+function CartCard({ cart, store, idx }) {
+  const [emails, setEmails] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [active, setActive] = useState(0);
+
+  const generate = async () => {
+    setLoading(true); setEmails([]);
+    const sys = `Expert e-commerce email copywriter. Return ONLY JSON array, no markdown:
+[{"seq":1,"delay":"Send immediately","subject":"...","preview":"...","body":"...under 85 words...","cta":"..."},
+ {"seq":2,"delay":"24 hours later","subject":"...","preview":"...","body":"...under 85 words...","cta":"..."},
+ {"seq":3,"delay":"48 hours later","subject":"...","preview":"...","body":"...under 85 words, include ${cart.discount}% discount...","cta":"..."}]`;
+    const raw = await callClaude(sys, `Store: ${store.name} sells ${store.niche}. Tone: ${store.tone}. Customer: ${cart.name}. Cart: ${cart.items.join(", ")} worth $${cart.total}. Write 3 personalised recovery emails. Email 3 uses code SAVE${cart.discount} for ${cart.discount}% off. Make each feel human and urgent.`);
+    setEmails(parseJSON(raw) || [{ seq: 1, delay: "", subject: "Error", preview: "", body: "Could not generate. Please try again.", cta: "" }]);
+    setLoading(false); setActive(0);
+  };
+
+  return (
+    <Card style={{ animation: `fadeUp 0.4s ease ${idx * 0.08}s both` }}>
+      <div style={{ padding: "15px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ width: 38, height: 38, background: C.amberDim, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>🛒</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700, color: C.text }}>{cart.name}</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 1, fontFamily: "'DM Sans', sans-serif" }}>{cart.items.join(" · ")} · <strong style={{ color: C.text }}>${cart.total}</strong></div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <Tag color={C.amber} dim={C.amberDim}>{cart.hoursAgo}h ago</Tag>
+          <div style={{ fontSize: 11, color: C.textDim, marginTop: 4, fontFamily: "'DM Sans', sans-serif" }}>Offer: {cart.discount}% off</div>
+        </div>
+      </div>
+
+      {emails.length > 0 && (
+        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            {emails.map((e, i) => (
+              <button key={i} onClick={() => setActive(i)} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${active === i ? C.gold : C.border}`, background: active === i ? C.gold + "22" : "transparent", color: active === i ? C.gold : C.textMuted, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Email {e.seq}</button>
+            ))}
+          </div>
+          {emails[active] && (
+            <div style={{ background: C.surfaceHigh, borderRadius: 12, padding: "14px 16px" }}>
+              <div style={{ fontSize: 10, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>{emails[active].delay?.toUpperCase()}</div>
+              <div style={{ fontSize: 16, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700, color: C.text, marginBottom: 3 }}>{emails[active].subject}</div>
+              <div style={{ fontSize: 12, color: C.textMuted, fontStyle: "italic", fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>{emails[active].preview}</div>
+              <div style={{ fontSize: 13, color: "#CCC", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.75, whiteSpace: "pre-line", marginBottom: 12 }}>{emails[active].body}</div>
+              {emails[active].cta && <div style={{ display: "inline-block", background: C.gold, color: "#000", padding: "8px 18px", borderRadius: 8, fontSize: 12, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>{emails[active].cta}</div>}
+            </div>
+          )}
+        </div>
+      )}
+      {loading && <div style={{ padding: "0 20px" }}><Spinner text="Writing your 3-email sequence..." /></div>}
+      <div style={{ padding: "14px 20px", display: "flex", gap: 10 }}>
+        <GoldBtn full onClick={generate} disabled={loading}>{loading ? "Writing..." : emails.length ? "↺ Regenerate Sequence" : "✦ Generate 3-Email Sequence"}</GoldBtn>
+        {emails.length > 0 && <button style={{ padding: "12px 16px", background: C.greenDim, color: C.green, border: "none", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>✓ Schedule</button>}
+      </div>
+    </Card>
+  );
+}
+
+// ── REACTIVATION ──────────────────────────────────────────────────────────────
+function Reactivation({ store }) {
+  return (
+    <div>
+      <SectionHead title="Customer Reactivation" sub="Win back customers who haven't bought in 45+ days with personalised AI campaigns." />
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {MOCK_DORMANT.map((c, i) => <ReactCard key={c.id} customer={c} store={store} idx={i} />)}
+      </div>
+    </div>
+  );
+}
+
+function ReactCard({ customer, store, idx }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState("email");
+
+  const generate = async () => {
+    setLoading(true); setData(null);
+    const sys = `Customer retention specialist. Return ONLY JSON, no markdown:
+{"emailSubject":"...","emailBody":"...under 95 words...","smsText":"...under 28 words...","discountCode":"...","discountPct":15,"insight":"...one sentence on why this customer will respond..."}`;
+    const raw = await callClaude(sys, `Store: ${store.name} sells ${store.niche}. Tone: ${store.tone}. Customer: ${customer.name}, last ordered ${customer.lastOrder}, spent ${customer.spent} across ${customer.orders} orders, loves: ${customer.topItem}. Write a personalised win-back campaign. Feel human, not promotional.`);
+    setData(parseJSON(raw)); setLoading(false);
+  };
+
+  return (
+    <Card style={{ animation: `fadeUp 0.4s ease ${idx * 0.08}s both` }}>
+      <div style={{ padding: "15px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ width: 38, height: 38, background: C.purpleDim, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: C.purple, fontFamily: "'Cormorant Garamond', serif" }}>{customer.name.split(" ").map(n => n[0]).join("")}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700, color: C.text }}>{customer.name}</div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 1, fontFamily: "'DM Sans', sans-serif" }}>Last order {customer.lastOrder} · {customer.orders} orders · {customer.spent} lifetime</div>
+        </div>
+        <Tag color={C.purple} dim={C.purpleDim}>Loves {customer.topItem}</Tag>
+      </div>
+
+      {data && (
+        <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ background: C.purpleDim + "55", border: `1px solid ${C.purple}33`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: C.purple, fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>✦ {data.insight}</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+            {["email", "sms"].map(t => (
+              <button key={t} onClick={() => setTab(t)} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${tab === t ? C.purple : C.border}`, background: tab === t ? C.purple + "22" : "transparent", color: tab === t ? C.purple : C.textMuted, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                {t === "email" ? "✉ Email" : "💬 SMS"}
+              </button>
+            ))}
+            {data.discountCode && (
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, background: C.surfaceHigh, border: `1.5px dashed ${C.border}`, borderRadius: 8, padding: "4px 12px" }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: C.text, fontFamily: "'Cormorant Garamond', serif", letterSpacing: "0.08em" }}>{data.discountCode}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.purple }}>{data.discountPct}% off</span>
+              </div>
+            )}
+          </div>
+          <div style={{ background: C.surfaceHigh, borderRadius: 12, padding: "14px 16px" }}>
+            {tab === "email" ? (
+              <>
+                <div style={{ fontSize: 16, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700, color: C.text, marginBottom: 8 }}>{data.emailSubject}</div>
+                <div style={{ fontSize: 13, color: "#CCC", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.75, whiteSpace: "pre-line" }}>{data.emailBody}</div>
+              </>
+            ) : (
+              <div style={{ fontSize: 14, color: "#CCC", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.7 }}>{data.smsText}</div>
+            )}
+          </div>
+        </div>
+      )}
+      {loading && <div style={{ padding: "0 20px" }}><Spinner text="Crafting personalised win-back campaign..." /></div>}
+      <div style={{ padding: "14px 20px" }}>
+        <GoldBtn full onClick={generate} disabled={loading}>{loading ? "Writing..." : data ? "↺ Regenerate Campaign" : "✦ Generate Win-Back Campaign"}</GoldBtn>
+      </div>
+    </Card>
+  );
+}
+
+// ── SOCIAL CONTENT ────────────────────────────────────────────────────────────
+function SocialContent({ store }) {
+  const [platform, setPlatform] = useState("Instagram");
+  const [type, setType] = useState("Product Spotlight");
+  const [topic, setTopic] = useState("");
+  const [posts, setPosts] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const generate = async () => {
+    setLoading(true); setPosts([]);
+    const sys = `Social media strategist for e-commerce. Return ONLY JSON array of 3 variations, no markdown:
+[{"v":1,"hook":"...","caption":"...under 80 words...","hashtags":"...8-10 hashtags...","time":"...best post time...","format":"...Reel/Carousel/Single image..."},...]`;
+    const raw = await callClaude(sys, `Store: ${store.name} sells ${store.niche}. Tone: ${store.tone}. Platform: ${platform}. Content: ${type}. ${topic ? `Product/topic: ${topic}.` : ""} 3 distinctly different post variations. Optimise for ${platform} reach.`);
+    setPosts(parseJSON(raw) || []); setLoading(false);
+  };
+
+  return (
+    <div>
+      <SectionHead title="Daily Social Content" sub="Generate ready-to-post content for Instagram, TikTok, and Facebook." />
+      <Card style={{ marginBottom: 20 }}>
+        <div style={{ padding: "20px 24px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>Platform</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {["Instagram", "TikTok", "Facebook"].map(p => (
+                  <button key={p} onClick={() => setPlatform(p)} style={{ flex: 1, padding: "8px 4px", borderRadius: 8, border: `1.5px solid ${platform === p ? C.blue : C.border}`, background: platform === p ? C.blue + "22" : "transparent", color: platform === p ? C.blue : C.textMuted, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>{p}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>Content Type</div>
+              <select value={type} onChange={e => setType(e.target.value)} style={{ width: "100%", padding: "9px 12px", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "'DM Sans', sans-serif", color: C.text }}>
+                {["Product Spotlight", "Behind the Scenes", "Customer Story", "Tips & Value", "Flash Offer", "Brand Story"].map(t => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>Product / Topic</div>
+              <input value={topic} onChange={e => setTopic(e.target.value)} placeholder="Optional — e.g. Blue sneakers" style={{ width: "100%", padding: "9px 12px", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "'DM Sans', sans-serif", color: C.text }} />
+            </div>
+          </div>
+          <GoldBtn full onClick={generate} disabled={loading}>{loading ? `✦ Writing ${platform} posts...` : `✦ Generate 3 ${platform} Posts`}</GoldBtn>
+        </div>
+      </Card>
+      {loading && <Spinner text={`Creating 3 ${platform} variations...`} />}
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {posts.map((p, i) => (
+          <Card key={i} style={{ animation: `fadeUp 0.4s ease ${i * 0.1}s both` }}>
+            <div style={{ padding: "13px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Tag color={C.blue} dim={C.blueDim}>Variation {p.v}</Tag>
+                <Tag color={C.textMuted} dim={C.border}>{p.format}</Tag>
+              </div>
+              <div style={{ fontSize: 12, color: C.green, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>Best: {p.time}</div>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              <div style={{ fontSize: 17, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700, color: C.text, marginBottom: 8 }}>{p.hook}</div>
+              <div style={{ fontSize: 13, color: "#CCC", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.75, whiteSpace: "pre-line", marginBottom: 10 }}>{p.caption}</div>
+              <div style={{ fontSize: 12, color: C.blue, fontFamily: "'DM Sans', sans-serif" }}>{p.hashtags}</div>
+            </div>
+            <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8 }}>
+              <button onClick={() => navigator.clipboard?.writeText(p.caption)} style={{ padding: "7px 14px", background: C.surfaceHigh, border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>Copy Caption</button>
+              <button onClick={() => navigator.clipboard?.writeText(p.hashtags)} style={{ padding: "7px 14px", background: C.surfaceHigh, border: `1px solid ${C.border}`, color: C.textMuted, borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>Copy Hashtags</button>
+              <button style={{ marginLeft: "auto", padding: "7px 16px", background: C.greenDim, color: C.green, border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>✓ Use This</button>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── PROMO CALENDAR ────────────────────────────────────────────────────────────
+function PromoCalendar({ store }) {
+  const [promos, setPromos] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [day, setDay] = useState(0);
+  const [tab, setTab] = useState("email");
+  const COLS = [C.blue, C.amber, C.green, C.purple, C.gold, C.red, "#1AA8A8"];
+
+  const generate = async () => {
+    setLoading(true); setPromos([]);
+    const sys = `E-commerce growth strategist. Return ONLY JSON array of exactly 7, no markdown:
+[{"day":"Mon","type":"Flash Sale","theme":"...","emailSubject":"...","emailBody":"...under 80 words...","caption":"...IG caption + hashtags under 60 words...","code":"...","pct":15,"revenue":"$..."},...7 total]`;
+    const raw = await callClaude(sys, `Store: ${store.name} sells ${store.niche}. Tone: ${store.tone}. AOV: $${store.avgOrder}. 7-day promo calendar, varied types, never repeat same type back-to-back.`);
+    const p = parseJSON(raw); setPromos(p || []); setLoading(false); setDay(0);
+  };
+
+  const active = promos[day];
+  return (
+    <div>
+      <SectionHead title="Weekly Promo Calendar" sub="AI builds your full week — email copy, social captions, and discount codes." />
+      {promos.length > 0 && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          {promos.map((p, i) => (
+            <button key={i} onClick={() => { setDay(i); setTab("email"); }} style={{ flex: 1, padding: "10px 4px", borderRadius: 12, border: `1.5px solid ${day === i ? COLS[i] : C.border}`, background: day === i ? COLS[i] + "22" : C.surface, color: day === i ? COLS[i] : C.textMuted, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", textAlign: "center", transition: "all 0.2s" }}>
+              <div>{p.day}</div><div style={{ fontSize: 10, fontWeight: 400, marginTop: 2, opacity: 0.7 }}>{(p.type || "").split(" ")[0]}</div>
+            </button>
+          ))}
+        </div>
+      )}
+      {active && (
+        <div style={{ animation: "fadeUp 0.3s ease both", marginBottom: 20 }}>
+          <div style={{ background: COLS[day] + "18", border: `1.5px solid ${COLS[day]}33`, borderRadius: 16, padding: "20px 24px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLS[day], letterSpacing: "0.08em", fontFamily: "'DM Sans', sans-serif" }}>{active.day} · {active.type?.toUpperCase()}</div>
+              <div style={{ fontSize: 22, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text, marginTop: 4 }}>{active.theme}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "'DM Sans', sans-serif" }}>Est. revenue</div>
+              <div style={{ fontSize: 24, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.green }}>{active.revenue}</div>
+            </div>
+          </div>
+          {active.code && (
+            <div style={{ background: C.surface, border: `1.5px dashed ${C.border}`, borderRadius: 12, padding: "14px 18px", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 10, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif" }}>DISCOUNT CODE</div>
+                <div style={{ fontSize: 24, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text, letterSpacing: "0.1em" }}>{active.code}</div>
+              </div>
+              <div style={{ fontSize: 36, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: COLS[day] }}>{active.pct}% OFF</div>
+            </div>
+          )}
+          <Card>
+            <div style={{ display: "flex", borderBottom: `1px solid ${C.border}` }}>
+              {[{ id: "email", label: "✉ Email" }, { id: "social", label: "◈ Social" }].map(t => (
+                <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, padding: "12px 0", border: "none", borderBottom: tab === t.id ? `2.5px solid ${COLS[day]}` : "2.5px solid transparent", background: "none", color: tab === t.id ? C.text : C.textMuted, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>{t.label}</button>
+              ))}
+            </div>
+            <div style={{ padding: "18px 20px" }}>
+              {tab === "email" ? (
+                <><div style={{ fontSize: 10, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>SUBJECT LINE</div>
+                  <div style={{ fontSize: 17, fontFamily: "'Cormorant Garamond', serif", fontWeight: 700, color: C.text, marginBottom: 12 }}>{active.emailSubject}</div>
+                  <div style={{ fontSize: 13, color: "#CCC", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.75, whiteSpace: "pre-line" }}>{active.emailBody}</div></>
+              ) : (
+                <><div style={{ fontSize: 10, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>INSTAGRAM CAPTION</div>
+                  <div style={{ fontSize: 13, color: "#CCC", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.75, whiteSpace: "pre-line" }}>{active.caption}</div></>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
+      {loading && <Spinner text="Building your 7-day promo calendar..." />}
+      <GoldBtn full onClick={generate} disabled={loading} style={{ padding: "15px 0", fontSize: 14 }}>{loading ? "Building..." : promos.length ? "↺ Regenerate Calendar" : "✦ Generate 7-Day Promo Calendar"}</GoldBtn>
+    </div>
+  );
+}
+
+// ── AD COPY (Scale only) ──────────────────────────────────────────────────────
+function AdCopy({ store }) {
+  const [platform, setPlatform] = useState("Meta (Facebook/Instagram)");
+  const [product, setProduct] = useState("");
+  const [goal, setGoal] = useState("Sales");
+  const [ads, setAds] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const generate = async () => {
+    setLoading(true); setAds([]);
+    const sys = `Expert paid ads copywriter. Return ONLY JSON array of 3 ad variations, no markdown:
+[{"v":1,"headline":"...under 7 words...","primary":"...primary text under 90 words...","cta":"Shop Now","hook":"...attention hook...","audience":"...suggested audience targeting..."},...]`;
+    const raw = await callClaude(sys, `Store: ${store.name} sells ${store.niche}. Tone: ${store.tone}. Platform: ${platform}. Product: ${product || store.niche}. Goal: ${goal}. Write 3 high-converting ad variations. Each must have a different angle (emotional, logical, urgency).`);
+    setAds(parseJSON(raw) || []); setLoading(false);
+  };
+
+  return (
+    <div>
+      <SectionHead title="Ad Copy Generator" sub="High-converting Meta and Google ads written by AI. 3 angle variations every time." color={C.green} />
+      <Card style={{ marginBottom: 20 }}>
+        <div style={{ padding: "20px 24px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>Platform</div>
+              <select value={platform} onChange={e => setPlatform(e.target.value)} style={{ width: "100%", padding: "9px 12px", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "'DM Sans', sans-serif", color: C.text }}>
+                {["Meta (Facebook/Instagram)", "Google Search", "TikTok Ads", "Pinterest Ads"].map(p => <option key={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>Product / Offer</div>
+              <input value={product} onChange={e => setProduct(e.target.value)} placeholder="e.g. Summer sale, New arrivals" style={{ width: "100%", padding: "9px 12px", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "'DM Sans', sans-serif", color: C.text }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>Campaign Goal</div>
+              <select value={goal} onChange={e => setGoal(e.target.value)} style={{ width: "100%", padding: "9px 12px", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "'DM Sans', sans-serif", color: C.text }}>
+                {["Sales", "Traffic", "Awareness", "Retargeting"].map(g => <option key={g}>{g}</option>)}
+              </select>
+            </div>
+          </div>
+          <GoldBtn full onClick={generate} disabled={loading}>{loading ? "✦ Writing ads..." : `✦ Generate 3 ${platform.split(" ")[0]} Ad Variations`}</GoldBtn>
+        </div>
+      </Card>
+      {loading && <Spinner text="Writing high-converting ad copy..." />}
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {ads.map((ad, i) => (
+          <Card key={i} style={{ animation: `fadeUp 0.4s ease ${i * 0.1}s both` }}>
+            <div style={{ padding: "13px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <Tag color={C.green} dim={C.greenDim}>Variation {ad.v}</Tag>
+              <div style={{ fontSize: 12, color: C.textMuted, fontFamily: "'DM Sans', sans-serif" }}>Angle: {["Emotional", "Logical", "Urgency"][i] || "Mixed"}</div>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.06em", fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>HEADLINE</div>
+              <div style={{ fontSize: 20, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text, marginBottom: 10 }}>{ad.headline}</div>
+              <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.06em", fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>HOOK</div>
+              <div style={{ fontSize: 14, color: C.gold, fontFamily: "'DM Sans', sans-serif", fontWeight: 600, marginBottom: 10 }}>{ad.hook}</div>
+              <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.06em", fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>PRIMARY TEXT</div>
+              <div style={{ fontSize: 13, color: "#CCC", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.75, whiteSpace: "pre-line", marginBottom: 10 }}>{ad.primary}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ display: "inline-block", background: C.green, color: "#000", padding: "7px 18px", borderRadius: 8, fontSize: 12, fontWeight: 700, fontFamily: "'DM Sans', sans-serif" }}>{ad.cta}</div>
+                <div style={{ fontSize: 12, color: C.textMuted, fontFamily: "'DM Sans', sans-serif" }}>Target: {ad.audience}</div>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── SEO BLOG (Scale only) ─────────────────────────────────────────────────────
+function SEOBlog({ store }) {
+  const [keyword, setKeyword] = useState("");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const generate = async () => {
+    if (!keyword.trim()) return;
+    setLoading(true); setResult(null);
+    const sys = `SEO content strategist. Return ONLY JSON, no markdown:
+{"title":"...SEO optimised title...","metaDesc":"...under 155 chars...","outline":["H2: ...","H2: ...","H2: ...","H2: ...","H2: ..."],"intro":"...compelling intro paragraph under 100 words...","keywords":["...","...","...","...","..."],"wordCount":1200,"searchVolume":"...est monthly searches...","difficulty":"Low/Medium/High"}`;
+    const raw = await callClaude(sys, `Store: ${store.name} sells ${store.niche}. Target keyword: "${keyword}". Create a complete SEO blog post plan that will rank on Google and drive buying traffic to the store.`);
+    setResult(parseJSON(raw)); setLoading(false);
+  };
+
+  return (
+    <div>
+      <SectionHead title="SEO Blog Generator" sub="Keyword-targeted blog content that drives organic traffic to your store every week." color={C.red} />
+      <Card style={{ marginBottom: 20 }}>
+        <div style={{ padding: "20px 24px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>Target Keyword</div>
+          <div style={{ display: "flex", gap: 12 }}>
+            <input value={keyword} onChange={e => setKeyword(e.target.value)} onKeyDown={e => e.key === "Enter" && generate()} placeholder="e.g. best running shoes for beginners, how to style a linen blazer" style={{ flex: 1, padding: "11px 14px", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "'DM Sans', sans-serif", color: C.text }} />
+            <GoldBtn onClick={generate} disabled={loading || !keyword.trim()}>{loading ? "Writing..." : "✦ Generate"}</GoldBtn>
+          </div>
+        </div>
+      </Card>
+      {loading && <Spinner text="Planning your SEO blog post..." />}
+      {result && (
+        <Card style={{ animation: "fadeUp 0.4s ease both" }}>
+          <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+              <Tag color={C.green} dim={C.greenDim}>~{result.searchVolume} searches/mo</Tag>
+              <Tag color={C.blue} dim={C.blueDim}>{result.wordCount} words</Tag>
+              <Tag color={result.difficulty === "Low" ? C.green : result.difficulty === "High" ? C.red : C.amber} dim={result.difficulty === "Low" ? C.greenDim : result.difficulty === "High" ? C.redDim : C.amberDim}>Difficulty: {result.difficulty}</Tag>
+            </div>
+            <div style={{ fontSize: 22, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text, marginBottom: 6 }}>{result.title}</div>
+            <div style={{ fontSize: 13, color: C.textMuted, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.6 }}>{result.metaDesc}</div>
+          </div>
+          <div style={{ padding: "18px 24px", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>INTRO PARAGRAPH</div>
+            <div style={{ fontSize: 14, color: "#CCC", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.75 }}>{result.intro}</div>
+          </div>
+          <div style={{ padding: "18px 24px", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>ARTICLE OUTLINE</div>
+            {(result.outline || []).map((h, i) => (
+              <div key={i} style={{ padding: "8px 0", borderBottom: i < result.outline.length - 1 ? `1px solid ${C.border}` : "none", fontSize: 14, color: C.text, fontFamily: "'DM Sans', sans-serif" }}>{h}</div>
+            ))}
+          </div>
+          <div style={{ padding: "16px 24px" }}>
+            <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>TARGET KEYWORDS</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {(result.keywords || []).map((k, i) => <Tag key={i} color={C.textMuted} dim={C.border}>{k}</Tag>)}
+            </div>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── PRODUCT DESCRIPTIONS (Scale only) ────────────────────────────────────────
+function ProductDescriptions({ store }) {
+  const [product, setProduct] = useState("");
+  const [features, setFeatures] = useState("");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const generate = async () => {
+    if (!product.trim()) return;
+    setLoading(true); setResult(null);
+    const sys = `Expert e-commerce product copywriter. Return ONLY JSON, no markdown:
+{"short":"...punchy short description under 30 words...","long":"...full persuasive description 100-130 words with benefits not just features...","bullets":["...","...","...","...","..."],"seoTitle":"...","metaDesc":"...under 155 chars...","emotionalHook":"...one powerful opening line..."}`;
+    const raw = await callClaude(sys, `Store: ${store.name} sells ${store.niche}. Tone: ${store.tone}. Product: ${product}. Features/details: ${features || "not specified"}. Write a full conversion-optimised product listing. Focus on benefits, not just features.`);
+    setResult(parseJSON(raw)); setLoading(false);
+  };
+
+  return (
+    <div>
+      <SectionHead title="Product Description Rewriter" sub="Turn boring product specs into persuasive copy that converts browsers into buyers." color={C.amber} />
+      <Card style={{ marginBottom: 20 }}>
+        <div style={{ padding: "20px 24px" }}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>Product Name</div>
+            <input value={product} onChange={e => setProduct(e.target.value)} placeholder="e.g. Linen Oversized Blazer, Ceramic Coffee Mug, Wireless Earbuds" style={{ width: "100%", padding: "11px 14px", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "'DM Sans', sans-serif", color: C.text }} />
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>Key Features / Details (optional)</div>
+            <textarea value={features} onChange={e => setFeatures(e.target.value)} placeholder="e.g. 100% linen, oversized fit, 4 colours, machine washable, sizes XS-XXL" rows={3} style={{ width: "100%", padding: "11px 14px", background: C.surfaceHigh, border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "'DM Sans', sans-serif", color: C.text, resize: "vertical" }} />
+          </div>
+          <GoldBtn full onClick={generate} disabled={loading || !product.trim()}>{loading ? "✦ Writing description..." : "✦ Generate Product Description"}</GoldBtn>
+        </div>
+      </Card>
+      {loading && <Spinner text="Writing your product description..." />}
+      {result && (
+        <Card style={{ animation: "fadeUp 0.4s ease both" }}>
+          <div style={{ padding: "18px 24px", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>EMOTIONAL HOOK</div>
+            <div style={{ fontSize: 22, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.gold }}>{result.emotionalHook}</div>
+          </div>
+          <div style={{ padding: "18px 24px", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 6 }}>SHORT DESCRIPTION</div>
+            <div style={{ fontSize: 15, color: C.text, fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>{result.short}</div>
+          </div>
+          <div style={{ padding: "18px 24px", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 6 }}>FULL DESCRIPTION</div>
+            <div style={{ fontSize: 14, color: "#CCC", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.8, whiteSpace: "pre-line" }}>{result.long}</div>
+          </div>
+          <div style={{ padding: "18px 24px", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>BULLET POINTS</div>
+            {(result.bullets || []).map((b, i) => (
+              <div key={i} style={{ display: "flex", gap: 10, padding: "6px 0", fontSize: 13, color: "#CCC", fontFamily: "'DM Sans', sans-serif" }}>
+                <span style={{ color: C.gold, flexShrink: 0 }}>✓</span> {b}
+              </div>
+            ))}
+          </div>
+          <div style={{ padding: "18px 24px" }}>
+            <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 6 }}>SEO TITLE</div>
+            <div style={{ fontSize: 15, color: C.text, fontFamily: "'DM Sans', sans-serif", fontWeight: 600, marginBottom: 10 }}>{result.seoTitle}</div>
+            <div style={{ fontSize: 11, color: C.textDim, letterSpacing: "0.07em", fontFamily: "'DM Sans', sans-serif", marginBottom: 6 }}>META DESCRIPTION</div>
+            <div style={{ fontSize: 13, color: C.textMuted, fontFamily: "'DM Sans', sans-serif" }}>{result.metaDesc}</div>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── PLAN SELECTION PAGE ───────────────────────────────────────────────────────
+function PlanSelect({ plan, onConfirm, onBack }) {
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@700;800&family=DM+Sans:wght@400;500;600;700&display=swap'); @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}} *{box-sizing:border-box;margin:0;padding:0}`}</style>
+      <div style={{ width: "100%", maxWidth: 440, animation: "fadeUp 0.4s ease both" }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", color: C.textMuted, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginBottom: 24, display: "flex", alignItems: "center", gap: 6 }}>← Back</button>
+        <div style={{ background: C.surface, border: `1.5px solid ${plan.color}`, borderRadius: 20, padding: "32px 28px", boxShadow: `0 0 40px ${plan.color}22` }}>
+          <div style={{ fontSize: 12, color: plan.color, fontWeight: 700, letterSpacing: "0.1em", fontFamily: "'DM Sans', sans-serif", marginBottom: 6 }}>{plan.name.toUpperCase()} PLAN</div>
+          <div style={{ fontSize: 40, fontFamily: "'Cormorant Garamond', serif", fontWeight: 800, color: C.text, marginBottom: 4 }}>${plan.price}<span style={{ fontSize: 14, color: C.textMuted, fontWeight: 400, fontFamily: "'DM Sans', sans-serif" }}>/month</span></div>
+          <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 24, fontFamily: "'DM Sans', sans-serif" }}>{plan.tagline}</div>
+          <div style={{ marginBottom: 24 }}>
+            {plan.features.map((f, i) => (
+              <div key={i} style={{ display: "flex", gap: 10, marginBottom: 8, alignItems: "flex-start" }}>
+                <span style={{ color: plan.color, flexShrink: 0 }}>✓</span>
+                <span style={{ fontSize: 13, color: C.textMuted, fontFamily: "'DM Sans', sans-serif" }}>{f}</span>
+              </div>
+            ))}
+          </div>
+          <GoldBtn full onClick={() => onConfirm(plan)} style={{ marginBottom: 10 }}>Try Free for 7 Days →</GoldBtn>
+          <div style={{ textAlign: "center", fontSize: 12, color: C.textDim, fontFamily: "'DM Sans', sans-serif" }}>No credit card required · Cancel anytime</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ROOT ──────────────────────────────────────────────────────────────────────
+export default function FlowSell() {
+  const [screen, setScreen] = useState("landing"); // landing | plan | login | app
+  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [user, setUser] = useState(null);
+
+  if (screen === "landing") return (
+    <Landing
+      onLogin={() => setScreen("login")}
+      onPlan={plan => { setSelectedPlan(plan); setScreen("plan"); }}
+    />
+  );
+
+  if (screen === "plan") return (
+    <PlanSelect
+      plan={selectedPlan}
+      onBack={() => setScreen("landing")}
+      onConfirm={plan => { setSelectedPlan(plan); setScreen("login"); }}
+    />
+  );
+
+  if (screen === "login") return (
+    <Login
+      onBack={() => setScreen(selectedPlan ? "plan" : "landing")}
+      onLogin={u => { setUser({ ...u, plan: selectedPlan || PLANS[1] }); setScreen("app"); }}
+    />
+  );
+
+  if (screen === "app" && user) return (
+    <Dashboard user={user} onLogout={() => { setUser(null); setScreen("landing"); }} />
+  );
+
+  return null;
+}
